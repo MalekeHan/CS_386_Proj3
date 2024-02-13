@@ -89,6 +89,32 @@ func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
 // or equivalently, the output of decryption *before* XOR'ing (otherwise known
 // as the "intermediate state").
 func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
+
+	// var intermediateState block
+	// var plaintext block
+
+	// We need to get the previous cipherblock here: C1 OR the IV
+	//getPrev idk
+
+	//We need to save that C1 cause we need to XOR it later so make a copy here that we will manipulate
+	// cpy of C1 here
+
+	//We know the block is 16 long
+	// iterate through starting at 15 and go though all 256 possible guesses to deduce the Itermediate state
+
+	// send each manipulated block to the server
+
+	//if padding error, try next guess
+
+	//else
+
+	/*
+		update the manipulated block to keep that guess since we know it is correct
+
+		//recover the plaintext by XORing the Intermediate state with the origingal previous cipherblock(C1/IV)
+
+	*/
+
 	return block{}, errors.New("unimplemented")
 }
 
