@@ -1,0 +1,121 @@
+CBC Mode for the block cipher
+ - Linking the output of one block to the INPUT of another block
+    - if the messages are the same the Ciphers are different
+
+ - IV is not a secret it MUST be random though
+ - This is slow --> no parellization --> must go through each block
+ - Succesptible to padding attacks
+    - An attack messing with a Ciphertext block will affect the next message block 
+
+
+Each plaintext block and cipher block is 16 bytes long
+
+IV used on the first cipher block just like in CBC Mode
+- generated randomly each time a plaintext is encrpyted
+
+
+Since we need the plaintext block and cipher block to be 16 bytes long we may run into an issue if the length is not |M| % 16 == 0
+    - We add a "TRAILER" to the plaintext to make it a multiple
+        - Compute number of bytes in length the plaintext it and decide how many extra bytes we need to add to make it a multiple of 16
+            - You take the number of trailer bytes that you must add, and have the value of each byte be equal to the number of trailer bytes. That is, you could add a 1 byte trailer with the value 0x01, a 2 byte trailer with the value 0x02, etc:
+    - If the plaintext is already a multiple of 16, we just add an entire trailer of 16 bytes behind it still 
+        - We must do this for the process of decryption
+            - The decryption algorithm would see that the last block is padding due to it having the byte value 0x10 (16) and remove it
+
+    - The decryption process knows whether the last block is padding or data by examining the value of the last byte. If the last byte's value corresponds to a number less than the block size (16),
+     it indicates the number of padding bytes added. If the last byte's value is exactly the block size (0x10), it indicates that the last block is entirely padding and should be removed completely.
+      This method ensures that the padding can be accurately and reliably removed, preserving the integrity of the original data.
+
+
+PROTOCOL
+    - Simple request-response
+        - Client sends an encrpyted command -- server sends an encrpyted response
+        - Message sent in both directions use the same key
+
+        Server accepts messages in ASCII -- each message is delimted by a trailing \n character
+
+LEAK:
+    When decrypting a ciphertext, the grades server performs the following steps:
+        1. Make sure valid IV and ciphertext   
+            - IV is 16 bytes
+            - Ciphertext is a multiple of 16
+                - MUST HAVE AT LEAST ONE BLOCK
+            If anything is wrong --> error is reported back to the user, stops processing, ERROR MESSAGE IS SENT BACK IN PLAINTEXT 
+                [Maybe I can get the key here?]
+        2. Decrypt using UFS mode (CBC)
+        3. Check the trailer of the plaintext   
+            - If valid --> stripped off
+            - If invlaid -->report an error and stop processing --ERROR MESSAGE IS SENT BACK ENCRYPTED
+                - need a way to become an ecryption orcale --> i can trigger the error message to be sent back encypted -- I need to somehow get the ability to connect this to the invalid IV/Cipher text plaintext error that is sent back
+
+        4. Interpret the resulting plaintext as a command (it was sent encrypted) and send any output or error messages to the user (encypted)
+            [Maybe I can trigger a specific error from certain commands]
+
+    This process leaks information about whether the trailer at the end was correct or not
+        - There SHOULD be no way of distinguishing a "bad trailer" error from any other error, as all such errors are encypted
+            - We leak the length of the error here though 
+                - This error only takes ONE block to encrypt because the plaintext is just "bad trailer\n"
+                    - less than 16 bytes long
+                - All other errors the server can generate take multiple ciphertext blocks to encrypt
+                    - An attacker can send their own ciphertext to the server, and just observe the number of ciphertext blocks in the servers resposne and can tell whether the ciphertext they sent decrypted to a plaintext witha  valid trailer
+                        - The server leaks whether or not an attackers submutted ciphertext decrypts to a plaintext with a valid trailer
+
+THE ATTACK:
+    - Use the small information leak to:
+        Decrypt any arbitrary ciphertext block
+        Decrypt any sequence of ciphertext blocks
+        Encrypt any sequence of plaintext blocks
+
+    - Do this all WITHOUT the key
+
+    OUTLINE OF THE ATTACK
+        - Recovering Intermediate State:
+            "decryptCiphertextBlock() --> I2"
+            Intermediate state --> "the decryption of a given cipher block"
+            Figure out what the decryption of a signle ciphertext block without knowing the key
+            - If we can make it so the final byte of the trailer is 0x01 then the entire trailer will be correct   
+                - 0x01 is a valid trailer on its own regardless of the plaintext
+                    - Though this is valid, this will more than likely not be a valid command
+                        - so the server WILL give an error --> THIS WILL NOT BE A TRAILER ERROR SO WILL BE A DIFFERENT LENGTH THAN THAT USUAL ERROR
+                            - will be able to tell the length of the resposne whether or not the cipher text you send decrpypts to a valid trailer 
+                    Once we send a cipher text whihc decrpypts to a plaintext with the final byte being 0x01 WE KNOW THE FINAL BYTE OF THE PLAINTEXT(P2) and the final byte of the preceeding ciphertext or IV
+
+        - DECRYPTING AND ENCRYPTING MULTIPLE blocks
+            - figure out how to recover intermediate states and use it as a building block
+
+
+MORE NOTES ON Intermediate State attack:
+    - Before encryption of a plaintext block occurs it is XORed wiht the prev ciphertext block
+        Plaintext XOR (Cb - 1)
+    - During decryption the output of the decryption of the ciphertext(Intermediate State) is XORed with the prev ciphertext block to produce plaintext
+        D(K, C) --> Intermediate XOR (Cb-1) --> Plaintext
+
+    - MANIPULATE Ciphertext 
+        - C2 can be used to manipulate C1
+            - So when C2 is decrypted and XORed with the manipulated C1, the resul is a plaintext with a specific strucutre (last byte being 0x01)
+        - Manipulate C1 so we send different versions of C1 and C2 to the server 
+            - If the server returns a padding error we know the last byte of C2 is NOT 0x01
+            - If the server does not return anything or a different error then we know the padding is valid (last byte of the decrypted C2 is 0x01)
+
+    - Manipulate the bytes of C1 so that the server accepts the padding
+    - I2[len(I2)] = C1[len(C1)] XOR 0x01
+
+    - Once we know the plaintext we can just do I2 XOR C1
+
+    - We need to repeat the attack to recover more bytes
+
+
+HOW WE CAN ATTACK:
+ - Manipulate the last byte of the block prededing the block we want to decrypt (C1)
+    - Make the last byte of the decrypted text (after the block cipher decryption and before the XOR with "C1" (THE INTERMEDIATE STATE I2)) eqaul to 0x01
+        - Try all 256 values for the last byte of C1 until we do not get a padding error
+ - Now we know the manipulated byte of "C1" that makes the last byte of the decrypted text 0x01
+    1. We need to XOR this byte with 0x01 to get the last byte of the Intermediate State (I2)
+    2. We then XOR the last byte of the Intermediate State (I2) with the last byte of the orignal C1 to get the last byte of the plaintext (P2)
+
+ - We now repeat this same exact thing for each proceeding byte 
+    - We need to incremenet the padding values correctly (0x02, 0x03.... 0x10)
+
+ - This will give us the plaintext of the whole block 
+
+ We are using the error messages as a signal --> if the error message is a padding error then we know the value is wrong and try something else
