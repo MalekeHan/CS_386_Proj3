@@ -83,12 +83,9 @@ func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
 	ctext := make([]block, len(ptext))
 	prevBlock := iv
 
-	// Simulate CBC mode "encryption" using XOR.
 	for i, plaintextBlock := range ptext {
-		// XOR the plaintext block with the previous ciphertext block (or IV for the first block)
-		xorBlock := xorBlocks(plaintextBlock, prevBlock)
+		xorBlock := xorBlocks(plaintextBlock, prevBlock) // go through and XOR the plaintext block with the previous cipher block/IV (CBC)
 
-		// Here, we consider the XOR operation as the "encryption" step.
 		ctext[i] = xorBlock
 
 		// The current ciphertext block becomes the previous block for the next iteration.
@@ -149,17 +146,19 @@ func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
 
 	// Decrypt each byte of the block starting from the last one
 	for i := 15; i >= 0; i-- {
-		paddingByte := byte(16 - i) // get the padding byte based on waht index we are on
+		paddingByte := byte(16 - i) // get the padding byte based on waht index we are on // the value that the server expects to see if the guess is correct
 		for guess := 0; guess < 256; guess++ {
-			tempCblock.bytes[i] = byte(guess) // put guess into the block
-			_, errResponseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock})
+			tempCblock.bytes[i] = byte(guess)                                         // put guess into the block  C1[i] = guess // try every single guess
+			_, errResponseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock}) // send the C1
 			fmt.Printf("THIS IS THE LEN OF THE SEND RESPONSE BLOCKS %d \n", len(errResponseBlocks))
 			if len(errResponseBlocks) != 1 { // check for non padding errors
 				fmt.Printf("I GOT A GOOD ERROR\n")
 				count += 1
-				intermediateState.bytes[i] = byte(guess) ^ paddingByte // good error indiciates the Is byte was found
-				for j := i; j < 16; j++ {                              //move to the next byte position.
-					tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte(16-i+1)
+				intermediateState.bytes[i] = byte(guess) ^ paddingByte // IS[i] = C1[i] XOR ExpectedPaddingByte
+				// set up all the bytes behind where we are at i to the correct padding pattern
+				for j := i; j < 16; j++ {
+					// set the guessed padding byte in the temp block for padding oracle verification.
+					tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte((16-i)+1) //C1[j] = I[j] XOR
 				}
 				break
 			} else {
@@ -177,7 +176,8 @@ func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
 		// Set the current byte and all following bytes to create a valid padding pattern for verification.
 		for j := i; j < 16; j++ {
 			// The bytes are set to produce a padding pattern of the form 01, 02 02, ..., 10 10 10 ... 10
-			tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte(16-i) // need to produce a padding pattern of  01, 02 02, ..., 10 10 10 ... 10
+			//C[i] = I[i] XOR Padding
+			tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte(16-i) // need to produce a padding pattern of  01, 02 02, ..., 10 10 10 ... 10  // make the server decrypt tempCblock to a block with correct padding since intermediatestate is "correct"
 		}
 		// Send the verification block to the server.
 		_, responseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock})
