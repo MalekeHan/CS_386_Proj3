@@ -1,0 +1,108 @@
+func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
+
+	// var intermediateState block
+	// var plaintext block
+
+	// We need to get the previous cipherblock here: C1 OR the IV
+	//getPrev idk
+
+	//We need to save that C1 cause we need to XOR it later so make a copy here that we will manipulate
+	// cpy of C1 here
+
+	//We know the block is 16 long
+	// iterate through starting at 15 and go though all 256 possible guesses to deduce the Itermediate state
+
+	// send each manipulated block to the server
+
+	//if padding error, try next guess
+
+	//else
+
+	/*
+		update the manipulated block to keep that guess since we know it is correct
+
+		recover the plaintext by XORing the Intermediate state with the original previous cipherblock(C1/IV)
+
+	*/
+
+	//USE THE INTERMEDIATE STATE TO FIGURE OUT HOW TO SET THE IV  --> figure out what to send --> no padding
+
+	return block{}, errors.New("unimplemented")
+}
+
+
+THIS IS THE ONE WITH THE BAD SIGNATURE:
+
+func decryptCiphertextBlock(conn *conn, iv block, cblock block) (block, error) {
+	var intermediateState block
+
+	manipulatedIV := iv //this will be the IV to manipulate (C1)
+
+	for byteIndex := 15; byteIndex >= 0; byteIndex-- {
+		paddingValue := byte(16 - byteIndex) // padding value for the byte position
+
+		for guess := 0; guess < 256; guess++ {
+
+			manipulatedIV.bytes[byteIndex] = byte(guess) // modify the IV with the guess
+
+			_, responseBlocks, _ := sendCommand(conn, manipulatedIV, []block{cblock}) // send manipulated IV and cipher block to the server
+
+			if len(responseBlocks) == 1 { // Assuming a single block response indicates a padding error.
+				continue // Try the next guess.
+			} else {
+				// Correct intermediate state byte found for this position.
+				intermediateState.bytes[byteIndex] = byte(guess) ^ paddingValue
+				fmt.Println("FOUND CORRECT IR FOR THIS BYTE")
+				break
+			}
+		}
+
+		// never found the Intermediate state
+		if intermediateState.bytes[byteIndex] == 0 {
+			return block{}, errors.New("failed to find intermediate state, no padding found")
+		}
+
+		// Update the manipulated IV for the next byte position, ensuring the padding will be correct.
+		for i := byteIndex; i < 16; i++ {
+			fmt.Println("GOING TO THE NEXT BYTE")
+			manipulatedIV.bytes[i] = intermediateState.bytes[i] ^ byte(16-byteIndex+1)
+		}
+	}
+
+	finalPaddingValue := byte(0x01) // For a padding of `0x01`
+	manipulatedIVForTest := iv
+	manipulatedIVForTest.bytes[15] = intermediateState.bytes[15] ^ finalPaddingValue
+
+	fmt.Println("GOING TO SEND FINAL BLOCK NOW")
+	// Send the final test block with the manipulated IV to the server.
+	_, responseBlocks, err := sendCommand(conn, manipulatedIVForTest, []block{cblock})
+	if len(responseBlocks) == 1 { // Assuming a single block response indicates a padding error.
+		return block{}, err
+	} else {
+		return intermediateState, nil
+	}
+}
+
+
+func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
+	var decryptedText []block
+
+	for i, cblock := range ctext {
+		// For the first block, use the provided IV; for others, use the previous ciphertext block as IV.
+		var currentIV block
+		if i == 0 {
+			currentIV = iv
+		} else {
+			currentIV = ctext[i-1]
+		}
+		fmt.Println("GOING TO DECRYPT CIPHER BLOCK NOW: ")
+		decryptedBlock, err := decryptCiphertextBlock(conn, currentIV, cblock)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt block %d: %v", i, err)
+		}
+		fmt.Printf("DECRYPTED THE CIPHER BLOCK")
+		decryptedText = append(decryptedText, decryptedBlock)
+	}
+
+	return decryptedText, nil
+}

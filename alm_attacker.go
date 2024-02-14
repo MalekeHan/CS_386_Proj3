@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,25 +39,30 @@ func stealGrades(conn *conn, studentId string) {
 	// The command, with trailer added and stored as a slice of plaintext
 	// blocks.
 	ptext := bytesToBlocks(addTrailer([]byte(cmd)))
+	fmt.Printf("GOING TO ENCRYPT THE PLAINTEXT NOW")
 	iv, ctext, err := encryptPlaintext(conn, ptext)
+	fmt.Printf("JUST ENCRYPTED: ")
 	if err != nil {
 		log.Fatalf("could not encrypt command: %v", err)
 	}
 
 	// Send the encrypted command to the server, and receive the encrypted
 	// response.
+	fmt.Printf("SENDING THE ENCRYPTED COMMAND NOW")
 	respIv, respCtext, err := sendCommand(conn, iv, ctext)
 	if err != nil {
 		log.Fatalf("could not send command ciphertext: %v", err)
 	}
 
 	// Decrypt the response.
+	fmt.Printf("GOING TO TRY TO DECRYPT NOW")
 	ptext, err = decryptCiphertext(conn, respIv, respCtext)
 	if err != nil {
 		log.Fatalf("could not send decrypt response ciphertext: %v", err)
 	}
 
 	// Strip the trailer from the decrypted plaintext response.
+	fmt.Printf("GOING TO REMOVE TRAILER")
 	grades, err := removeTrailer(concatBlocks(ptext...))
 	if err != nil {
 		log.Fatalf("could not remove trailer: %v", err)
@@ -68,16 +74,77 @@ func stealGrades(conn *conn, studentId string) {
 // Encrypts the plaintext, assuming the trailer has already been added.
 //
 // Returns the IV and all ciphertext blocks.
+
+// func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
+// 	return block{}, nil, errors.New("unimplemented")
+// }
+
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	return block{}, nil, errors.New("unimplemented")
+	// Generate a random IV for the encryption.
+	var iv block
+	if _, err := io.ReadFull(rand.Reader, iv.bytes[:]); err != nil {
+		return block{}, nil, fmt.Errorf("failed to generate IV: %v", err)
+	}
+
+	ctext := make([]block, len(ptext))
+	prevBlock := iv
+
+	// Simulate CBC mode "encryption" using XOR.
+	for i, plaintextBlock := range ptext {
+		// XOR the plaintext block with the previous ciphertext block (or IV for the first block)
+		xorBlock := xorBlocks(plaintextBlock, prevBlock)
+
+		// Here, we consider the XOR operation as the "encryption" step.
+		ctext[i] = xorBlock
+
+		// The current ciphertext block becomes the previous block for the next iteration.
+		prevBlock = ctext[i]
+	}
+
+	return iv, ctext, nil
 }
 
 // Decrypts the given ciphertext, but does not strip the trailer.
 //
 // Note that this should *not* result in the server believing that a valid
 // command has been sent. That's for `stealGrades` to do!
+//
+//	func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
+//		return nil, errors.New("unimplemented")
+//	}
 func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
-	return nil, errors.New("unimplemented")
+	// Check if there's anything to decrypt
+	if len(ctext) == 0 {
+		return nil, errors.New("ciphertext cannot be empty")
+	}
+
+	// Prepare a slice to hold the decrypted blocks
+	decryptedBlocks := make([]block, len(ctext))
+
+	// Iterate over each block in the ciphertext
+	for i, cblock := range ctext {
+		// Decrypt each block to get its intermediate state
+		intermediateState, err := decryptCiphertextBlock(conn, cblock)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt block at index %d: %v", i, err)
+		}
+
+		// The IV for the first block is the IV passed to the function,
+		// and for subsequent blocks, it's the previous block in the ciphertext
+		var prevBlock block
+		if i == 0 {
+			prevBlock = iv
+		} else {
+			prevBlock = ctext[i-1]
+		}
+
+		// XOR the intermediate state with the previous block (or IV for the first block) to get the plaintext
+		for j := range prevBlock.bytes {
+			decryptedBlocks[i].bytes[j] = intermediateState.bytes[j] ^ prevBlock.bytes[j]
+		}
+	}
+
+	return decryptedBlocks, nil
 }
 
 // Reverse-engineers the decryption of `cblock`. Returns a plaintext block which
@@ -89,33 +156,60 @@ func decryptCiphertext(conn *conn, iv block, ctext []block) ([]block, error) {
 // or equivalently, the output of decryption *before* XOR'ing (otherwise known
 // as the "intermediate state").
 func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
+	var intermediateState block
+	var simulatedIV block // Represents the manipulated IV or previous ciphertext block effect.
 
-	// var intermediateState block
-	// var plaintext block
+	// Iterating through each byte in the block from the end to the start.
+	for byteIndex := 15; byteIndex >= 0; byteIndex-- {
+		found := false
+		paddingValue := byte(16 - byteIndex) // The padding value we aim to simulate for this byte.
 
-	// We need to get the previous cipherblock here: C1 OR the IV
-	//getPrev idk
+		// Trying each possible value for the current byte.
+		for guess := 0; guess < 256; guess++ {
+			// Prepare the simulatedIV for this guess.
+			simulatedIV.bytes[byteIndex] = byte(guess) ^ paddingValue
 
-	//We need to save that C1 cause we need to XOR it later so make a copy here that we will manipulate
-	// cpy of C1 here
+			// Adjust the simulatedIV for already discovered bytes to maintain correct padding.
+			for i := byteIndex + 1; i < 16; i++ {
+				// For already discovered bytes, adjust the simulated IV to reflect the new padding value
+				// This ensures the server sees the expected padding pattern when verifying the block
+				simulatedIV.bytes[i] = intermediateState.bytes[i] ^ byte(16-byteIndex+1)
+			}
 
-	//We know the block is 16 long
-	// iterate through starting at 15 and go though all 256 possible guesses to deduce the Itermediate state
+			_, responseBlocks, _ := sendCommand(conn, simulatedIV, []block{cblock})
+			if len(responseBlocks) > 1 {
+				// Found the correct intermediate state byte for this position.
+				intermediateState.bytes[byteIndex] = byte(guess) ^ paddingValue
+				found = true
+				break
+			}
+		}
 
-	// send each manipulated block to the server
+		if !found {
+			return block{}, fmt.Errorf("failed to find intermediate state for byte index %d", byteIndex)
+		}
+	}
 
-	//if padding error, try next guess
+	// Final verification: Ensure the entire block, with discovered intermediate state, results in correct padding.
+	for i := 0; i < 16; i++ {
+		// For final verification, set the simulated IV to produce a block with padding 0x01 through 0x10.
+		paddingValue := byte(16 - i)
+		for j := 0; j < 16; j++ {
+			if j >= i {
+				// Adjust the simulated IV to simulate correct padding for verification.
+				simulatedIV.bytes[j] = intermediateState.bytes[j] ^ paddingValue
+			}
+		}
 
-	//else
+		_, responseBlocks, _ := sendCommand(conn, simulatedIV, []block{cblock})
+		// Expect a single block response indicating correct padding; otherwise, the padding is incorrect.
+		if len(responseBlocks) > 1 {
+			return block{}, fmt.Errorf("final padding verification failed for byte index %d", i)
+		}
+	}
 
-	/*
-		update the manipulated block to keep that guess since we know it is correct
-
-		//recover the plaintext by XORing the Intermediate state with the origingal previous cipherblock(C1/IV)
-
-	*/
-
-	return block{}, errors.New("unimplemented")
+	// If all bytes pass the final verification, the intermediate state is correctly determined.
+	return intermediateState, nil
 }
 
 /*************************** Provided Helper Code *****************************/

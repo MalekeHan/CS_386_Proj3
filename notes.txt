@@ -109,6 +109,7 @@ HOW WE CAN ATTACK:
  - Manipulate the last byte of the block prededing the block we want to decrypt (C1)
     - Make the last byte of the decrypted text (after the block cipher decryption and before the XOR with "C1" (THE INTERMEDIATE STATE I2)) eqaul to 0x01
         - Try all 256 values for the last byte of C1 until we do not get a padding error
+
  - Now we know the manipulated byte of "C1" that makes the last byte of the decrypted text 0x01
     1. We need to XOR this byte with 0x01 to get the last byte of the Intermediate State (I2)
     2. We then XOR the last byte of the Intermediate State (I2) with the last byte of the orignal C1 to get the last byte of the plaintext (P2)
@@ -119,3 +120,20 @@ HOW WE CAN ATTACK:
  - This will give us the plaintext of the whole block 
 
  We are using the error messages as a signal --> if the error message is a padding error then we know the value is wrong and try something else
+
+
+Make the plain text 1
+
+Call sendCommand with a chosen ciphertext
+Send a IV and Ciphertext block
+Because I can change the IV
+
+
+WE KNOW IV
+WE KNOW THE LAST BYTE OF THE PLAINTEXT is 1 because i didnt get a trailer error
+
+
+SOLVE FOR THE LAST BYTE OF THE INTERMEDIATE  
+
+
+RETURN ALL THE BYTES OF THE INTERMEDIATE STATE
