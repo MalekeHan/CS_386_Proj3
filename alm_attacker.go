@@ -75,23 +75,37 @@ func stealGrades(conn *conn, studentId string) {
 //
 // Returns the IV and all ciphertext blocks.
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	var iv block // generate random IV block
+	// Generate a random IV for the encryption.
+	var iv block
 	if _, err := io.ReadFull(rand.Reader, iv.bytes[:]); err != nil {
 		return block{}, nil, fmt.Errorf("failed to generate IV: %v", err)
 	}
 
+	// Initialize the array to hold the ciphertext blocks
 	ctext := make([]block, len(ptext))
 	prevBlock := iv
-
+	fmt.Printf("\nTHIS IS THE PLAIN TEXT BLOCK: %v\n", ptext)
+	// Encrypt each plaintext block using the server
 	for i, plaintextBlock := range ptext {
-		xorBlock := xorBlocks(plaintextBlock, prevBlock) // go through and XOR the plaintext block with the previous cipher block/IV (CBC)
+		fmt.Printf("THIS IS THE CURRENT PLAIN TEXT BLOCK: %v\n", plaintextBlock)
+		// XOR the plaintext block with the previous block (or IV for the first block)
+		xorBlock := xorBlocks(plaintextBlock, prevBlock)
+		fmt.Printf("THIS IS THE XOR TEXT BLOCK: %x\n", xorBlock.bytes)
+		// Send the XOR'd block to the server for encryption
+		_, encryptedBlocks, err := sendCommand(conn, iv, []block{xorBlock})
+		if err != nil {
+			return block{}, nil, fmt.Errorf("failed to encrypt via server: %v", err)
+		}
+		fmt.Printf("THIS IS THE ENCRYPTED BLOCKS: %x\n", encryptedBlocks[0].bytes)
+		// Save the server-encrypted block
+		ctext[i] = encryptedBlocks[0]
 
-		ctext[i] = xorBlock
-
-		// The current ciphertext block becomes the previous block for the next iteration.
-		prevBlock = ctext[i]
+		// The server-encrypted block becomes the previous block for the next iteration
+		prevBlock = encryptedBlocks[0]
 	}
+	fmt.Printf("THIS IS THE CTEXT TEXT BLOCK: %v\n", ctext)
 
+	// Return the initial IV and the array of encrypted blocks
 	return iv, ctext, nil
 }
 
@@ -150,9 +164,9 @@ func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
 		for guess := 0; guess < 256; guess++ {
 			tempCblock.bytes[i] = byte(guess)                                         // put guess into the block  C1[i] = guess // try every single guess
 			_, errResponseBlocks, _ := sendCommand(conn, tempCblock, []block{cblock}) // send the C1
-			fmt.Printf("THIS IS THE LEN OF THE SEND RESPONSE BLOCKS %d \n", len(errResponseBlocks))
+			//fmt.Printf("THIS IS THE LEN OF THE SEND RESPONSE BLOCKS %d \n", len(errResponseBlocks))
 			if len(errResponseBlocks) != 1 { // check for non padding errors
-				fmt.Printf("I GOT A GOOD ERROR\n")
+				//fmt.Printf("I GOT A GOOD ERROR**************************************************************************************************\n")
 				count += 1
 				intermediateState.bytes[i] = byte(guess) ^ paddingByte // IS[i] = C1[i] XOR ExpectedPaddingByte
 				// set up all the bytes behind where we are at i to the correct padding pattern
@@ -162,7 +176,7 @@ func decryptCiphertextBlock(conn *conn, cblock block) (block, error) {
 				}
 				break
 			} else {
-				fmt.Println("GOT PADDING ERROR WILL TRY NEXT GUESS\n")
+				//fmt.Println("GOT PADDING ERROR WILL TRY NEXT GUESS\n")
 			}
 		}
 	}
