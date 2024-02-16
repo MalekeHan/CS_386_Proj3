@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -75,38 +74,7 @@ func stealGrades(conn *conn, studentId string) {
 //
 // Returns the IV and all ciphertext blocks.
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	// Generate a random IV for the encryption.
-	var iv block
-	if _, err := io.ReadFull(rand.Reader, iv.bytes[:]); err != nil {
-		return block{}, nil, fmt.Errorf("failed to generate IV: %v", err)
-	}
 
-	// Initialize the array to hold the ciphertext blocks
-	ctext := make([]block, len(ptext))
-	prevBlock := iv
-	fmt.Printf("\nTHIS IS THE PLAIN TEXT BLOCK: %v\n", ptext)
-	// Encrypt each plaintext block using the server
-	for i, plaintextBlock := range ptext {
-		fmt.Printf("THIS IS THE CURRENT PLAIN TEXT BLOCK: %v\n", plaintextBlock)
-		// XOR the plaintext block with the previous block (or IV for the first block)
-		xorBlock := xorBlocks(plaintextBlock, prevBlock)
-		fmt.Printf("THIS IS THE XOR TEXT BLOCK: %x\n", xorBlock.bytes)
-		// Send the XOR'd block to the server for encryption
-		_, encryptedBlocks, err := sendCommand(conn, iv, []block{xorBlock})
-		if err != nil {
-			return block{}, nil, fmt.Errorf("failed to encrypt via server: %v", err)
-		}
-		fmt.Printf("THIS IS THE ENCRYPTED BLOCKS: %x\n", encryptedBlocks[0].bytes)
-		// Save the server-encrypted block
-		ctext[i] = encryptedBlocks[0]
-
-		// The server-encrypted block becomes the previous block for the next iteration
-		prevBlock = encryptedBlocks[0]
-	}
-	fmt.Printf("THIS IS THE CTEXT TEXT BLOCK: %v\n", ctext)
-
-	// Return the initial IV and the array of encrypted blocks
-	return iv, ctext, nil
 }
 
 // Decrypts the given ciphertext, but does not strip the trailer.

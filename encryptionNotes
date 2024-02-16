@@ -1,0 +1,50 @@
+Plaintext = Intermediate State XOR Previous Ciphertext (or IV)
+
+Correct Ciphertext = Intermediate State XOR Desired Plaintext
+
+PLAINTEXT = INTERMEDIATESTATE XOR CIPHERTEXT
+
+INTERMEDIATE = PT ^ IV
+
+
+Start with a target plaintext block you want to encrypt.
+Choose a random previous ciphertext block (or IV for the first block). This will be used in the XOR operation to find the correct ciphertext block.
+Iterate through all possible bytes (0x00 to 0xFF) for each byte position in the block:
+For each byte position, use the decryptCiphertextBlock function to find the intermediate state that corresponds to each possible byte value. This step involves guessing and checking, as you need to find out what intermediate state leads to the target plaintext when XORed with the "previous ciphertext."
+Once you find the correct intermediate state for each byte position, you have essentially found the decryption result that, when XORed with the "previous ciphertext," gives your target plaintext.
+Calculate the correct ciphertext for the entire block by XORing the discovered intermediate states with the target plaintext.
+
+
+func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
+	var ctext []block // This will hold our ciphertext blocks
+	var iv block      // This will be our IV for the encryption
+
+	// Generate a random IV
+	if _, err := rand.Read(iv.bytes[:]); err != nil {
+		return block{}, nil, fmt.Errorf("failed to generate IV: %v", err)
+	}
+
+	// Assuming you have a way to get the intermediate state from decryptCiphertextBlock
+	// For the first block, you need to XOR it with IV
+	firstIntermediateState, err := decryptCiphertextBlock(conn, ptext[0])
+	if err != nil {
+		return block{}, nil, fmt.Errorf("failed to get intermediate state for block 0: %v", err)
+	}
+	firstCtextBlock := xorBlocks(firstIntermediateState, iv)
+	ctext = append(ctext, firstCtextBlock)
+
+	// For subsequent blocks, XOR the plaintext block with the previous ciphertext block
+	for i := 1; i < len(ptext); i++ {
+		intermediateState, err := decryptCiphertextBlock(conn, ptext[i])
+		if err != nil {
+			return block{}, nil, fmt.Errorf("failed to get intermediate state for block %d: %v", i, err)
+		}
+		ctextBlock := xorBlocks(intermediateState, ctext[i-1])
+		ctext = append(ctext, ctextBlock)
+	}
+
+	return iv, ctext, nil
+}
+
+
+PLAINTEXT = INTERMEDIATESTATE XOR CIPHERTEXT
