@@ -38,6 +38,7 @@ func stealGrades(conn *conn, studentId string) {
 	// The command, with trailer added and stored as a slice of plaintext
 	// blocks.
 	ptext := bytesToBlocks(addTrailer([]byte(cmd)))
+	debugPrintf("Plaintext command being sent: %s\n", cmd)
 	fmt.Printf("GOING TO ENCRYPT THE PLAINTEXT NOW")
 	iv, ctext, err := encryptPlaintext(conn, ptext)
 	fmt.Printf("JUST ENCRYPTED: ")
@@ -73,8 +74,35 @@ func stealGrades(conn *conn, studentId string) {
 // Encrypts the plaintext, assuming the trailer has already been added.
 //
 // Returns the IV and all ciphertext blocks.
-func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
 
+func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
+	if len(ptext) == 0 {
+		return block{}, nil, errors.New("plaintext is empty")
+	}
+
+	ctext := make([]block, len(ptext))
+	ivs := make([]block, len(ptext))
+
+	var arbitraryC0 block // Initialized to zero.
+
+	// Iterate over each plaintext block.
+	for i, pBlock := range ptext {
+
+		dC0, err := decryptCiphertextBlock(conn, arbitraryC0) //decrypt the arbitrary C0 block to get D(C0).
+		if err != nil {
+			return block{}, nil, fmt.Errorf("failed to decrypt arbitrary C0: %v", err)
+		}
+
+		if i == 0 {
+			// calculate IV such that IV XOR D(C0) = P0.
+			ivs[i] = xorBlocks(dC0, pBlock)
+		} else {
+			ctext[i-1] = xorBlocks(dC0, pBlock)
+		}
+
+		ctext[i] = arbitraryC0
+	}
+	return ivs[0], ctext, nil
 }
 
 // Decrypts the given ciphertext, but does not strip the trailer.

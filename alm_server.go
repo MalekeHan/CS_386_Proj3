@@ -279,6 +279,7 @@ func handleRequest(conn *conn) error {
 			}
 		default:
 			err := conn.write([]byte("invalid or unrecognized command; try typing \"help\""))
+			debugPrintf("Plaintext command being sent: %s %s\n", cmdName, args)
 			if err != nil {
 				return fmt.Errorf("failed to write response: %v", err)
 			}
