@@ -81,7 +81,8 @@ func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
 	}
 
 	ctext := make([]block, len(ptext))
-	ivs := make([]block, len(ptext))
+	//ivs := make([]block, len(ptext))
+	var iv block
 
 	var arbitraryC0 block // Initialized to zero.
 
@@ -95,14 +96,19 @@ func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
 
 		if i == 0 {
 			// calculate IV such that IV XOR D(C0) = P0.
-			ivs[i] = xorBlocks(dC0, pBlock)
+			iv := xorBlocks(dC0, ptext[0])
+			if pBlock == xorBlocks(dC0, iv) {
+				fmt.Printf("YEAH THIS HOLDS FOR THE EQUATION $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+			} else {
+				fmt.Printf("NOPE WAS VERY VERY WRONG $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+			}
 		} else {
 			ctext[i-1] = xorBlocks(dC0, pBlock)
 		}
 
 		ctext[i] = arbitraryC0
 	}
-	return ivs[0], ctext, nil
+	return iv, ctext, nil
 }
 
 // Decrypts the given ciphertext, but does not strip the trailer.

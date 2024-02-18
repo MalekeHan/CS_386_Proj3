@@ -199,6 +199,8 @@ func (c *conn) read() ([]byte, error) {
 		return nil, nil
 	}
 
+	debugPrintf("%v plaintext command: %s\n", debugPrefix, string(ptext))
+
 	// Add an extra space b/w "w/o" and "trailer" so the line is the same length
 	// as the preceding one.
 	debugPrintf("%v plaintext (w/o  trailer): %v\n", debugPrefix, hex.EncodeToString(ptext))

@@ -1,0 +1,38 @@
+func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
+	if len(ptext) == 0 {
+		return block{}, nil, errors.New("plaintext is empty")
+	}
+
+	ctext := make([]block, len(ptext))
+
+	var arbitraryC0 block // Initialized to zero.
+
+	dC0, err := decryptCiphertextBlock(conn, arbitraryC0) //decrypt the arbitrary C0 block to get D(C0).
+	if err != nil {
+		return block{}, nil, fmt.Errorf("failed to decrypt arbitrary C0: %v", err)
+	}
+	iv := xorBlocks(dC0, ptext[0])
+	if ptext[0] == xorBlocks(dC0, iv) {
+		fmt.Printf("YEAH THIS HOLDS FOR THE EQUATION $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+	} else {
+		fmt.Printf("NOPE WAS VERY VERY WRONG $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+	}
+	ctext[0] = arbitraryC0
+	arbitraryC0 = iv
+
+	for i := 1; i < len(ptext); i++ {
+		dC0, err := decryptCiphertextBlock(conn, arbitraryC0) //decrypt the arbitrary C0 block to get D(C0).
+		if err != nil {
+			return block{}, nil, fmt.Errorf("failed to decrypt arbitrary C0: %v", err)
+		}
+		ctext[i] = xorBlocks(dC0, ptext[i])
+		if ptext[i] == xorBlocks(dC0, arbitraryC0) {
+			fmt.Printf("YEAH THIS HOLDS FOR THE EQUATION $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+		} else {
+			fmt.Printf("NOPE WAS VERY VERY WRONG $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
+		}
+		arbitraryC0 = ctext[i]
+	}
+
+	return iv, ctext, nil
+}
