@@ -77,40 +77,38 @@ func stealGrades(conn *conn, studentId string) {
 // Returns the IV and all ciphertext blocks.
 
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	if len(ptext) != 2 {
-		return block{}, nil, errors.New("function is designed for exactly two blocks of plaintext")
+	if len(ptext) < 2 {
+		return block{}, nil, errors.New("function requires at least two blocks of plaintext")
 	}
 
-	// Placeholder for the intermediate states (IS) of c0 and c1
-	var IS_c1, IS_c0 block
+	ctext := make([]block, len(ptext))
 
-	// Step 0: Initialize c1 with an arbitrary value
-	var c1 block
-	_, err := rand.Read(c1.bytes[:])
+	// initialize C_n with random bits
+	_, err := rand.Read(ctext[len(ptext)-1].bytes[:])
 	if err != nil {
-		return block{}, nil, errors.New("failed to generate arbitrary c1")
+		return block{}, nil, fmt.Errorf("failed to generate arbitrary last ciphertext block: %v", err)
 	}
 
-	// Use decryptCiphertextBlock to find the intermediate state for c1
-	IS_c1, err = decryptCiphertextBlock(conn, c1)
+	// Iterate over plaintext blocks in reverse order, starting with the second to last block
+	// start from the back and go in reverse order "we MUST start from the back because reverse engineering cannot go forward"
+	for i := len(ptext) - 2; i >= 0; i-- {
+		// use the next ciphertext block (or the arbitrary one for the last iteration) to find the intermediate state
+		intermediateState, err := decryptCiphertextBlock(conn, ctext[i+1])
+		if err != nil {
+			return block{}, nil, fmt.Errorf("failed to get intermediate state for block %d: %v", i+1, err)
+		}
+
+		// calculate the current ciphertext block based on the intermediate state and the current plaintext block
+
+		ctext[i] = xorBlocks(intermediateState, ptext[i+1])
+	}
+
+	// for the first ctext calculate the IV
+	IS_c0, err := decryptCiphertextBlock(conn, ctext[0])
 	if err != nil {
-		return block{}, nil, fmt.Errorf("failed to get intermediate state for c1: %v", err)
+		return block{}, nil, fmt.Errorf("failed to get intermediate state for the first ciphertext block: %v", err)
 	}
-
-	// Calculate c0 based on IS_c1 XOR ptext[1]
-	c0 := xorBlocks(IS_c1, ptext[1])
-
-	// Use decryptCiphertextBlock again to find the intermediate state for c0
-	IS_c0, err = decryptCiphertextBlock(conn, c0)
-	if err != nil {
-		return block{}, nil, fmt.Errorf("failed to get intermediate state for c0: %v", err)
-	}
-
-	// Calculate IV based on IS_c0 XOR ptext[0]
 	IV := xorBlocks(IS_c0, ptext[0])
-
-	// Construct the ciphertext array with c0 and c1
-	ctext := []block{c0, c1}
 
 	return IV, ctext, nil
 }
