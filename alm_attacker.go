@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -76,39 +77,42 @@ func stealGrades(conn *conn, studentId string) {
 // Returns the IV and all ciphertext blocks.
 
 func encryptPlaintext(conn *conn, ptext []block) (block, []block, error) {
-	if len(ptext) == 0 {
-		return block{}, nil, errors.New("plaintext is empty")
+	if len(ptext) != 2 {
+		return block{}, nil, errors.New("function is designed for exactly two blocks of plaintext")
 	}
 
-	ctext := make([]block, len(ptext))
-	//ivs := make([]block, len(ptext))
-	var iv block
+	// Placeholder for the intermediate states (IS) of c0 and c1
+	var IS_c1, IS_c0 block
 
-	var arbitraryC0 block // Initialized to zero.
-
-	// Iterate over each plaintext block.
-	for i, pBlock := range ptext {
-
-		dC0, err := decryptCiphertextBlock(conn, arbitraryC0) //decrypt the arbitrary C0 block to get D(C0).
-		if err != nil {
-			return block{}, nil, fmt.Errorf("failed to decrypt arbitrary C0: %v", err)
-		}
-
-		if i == 0 {
-			// calculate IV such that IV XOR D(C0) = P0.
-			iv := xorBlocks(dC0, ptext[0])
-			if pBlock == xorBlocks(dC0, iv) {
-				fmt.Printf("YEAH THIS HOLDS FOR THE EQUATION $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
-			} else {
-				fmt.Printf("NOPE WAS VERY VERY WRONG $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n")
-			}
-		} else {
-			ctext[i-1] = xorBlocks(dC0, pBlock)
-		}
-
-		ctext[i] = arbitraryC0
+	// Step 0: Initialize c1 with an arbitrary value
+	var c1 block
+	_, err := rand.Read(c1.bytes[:])
+	if err != nil {
+		return block{}, nil, errors.New("failed to generate arbitrary c1")
 	}
-	return iv, ctext, nil
+
+	// Use decryptCiphertextBlock to find the intermediate state for c1
+	IS_c1, err = decryptCiphertextBlock(conn, c1)
+	if err != nil {
+		return block{}, nil, fmt.Errorf("failed to get intermediate state for c1: %v", err)
+	}
+
+	// Calculate c0 based on IS_c1 XOR ptext[1]
+	c0 := xorBlocks(IS_c1, ptext[1])
+
+	// Use decryptCiphertextBlock again to find the intermediate state for c0
+	IS_c0, err = decryptCiphertextBlock(conn, c0)
+	if err != nil {
+		return block{}, nil, fmt.Errorf("failed to get intermediate state for c0: %v", err)
+	}
+
+	// Calculate IV based on IS_c0 XOR ptext[0]
+	IV := xorBlocks(IS_c0, ptext[0])
+
+	// Construct the ciphertext array with c0 and c1
+	ctext := []block{c0, c1}
+
+	return IV, ctext, nil
 }
 
 // Decrypts the given ciphertext, but does not strip the trailer.
